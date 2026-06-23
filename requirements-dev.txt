@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# ---- Tests ----
+pytest==8.3.4
+httpx==0.28.1            # FastAPI TestClient transport
+pytest-asyncio==0.25.0
+
+# ---- Benchmark comparison baseline ----
+pandas==2.2.3           # used only by scripts/benchmark.py as the "row-by-row / pandas" baseline
+psutil==6.1.1           # peak-memory measurement in the benchmark

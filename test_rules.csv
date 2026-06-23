@@ -1,0 +1,7 @@
+id;name;DATE_TEST
+1;alice;25/12/2020
+2;bob;12/25/2020
+3;carol;2021-06-15
+4;dave;not_a_date
+5;erin;March 15, 2021
+6;frank;13/02/2020 14:30:00

@@ -1,0 +1,21 @@
+# ---- API & serving ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+gunicorn==23.0.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# ---- Data engine ----
+# Polars: Rust back-end, multi-threaded, streaming/lazy engine + vectorized date parsing.
+# On CPUs without AVX2 support, swap for `polars-lts-cpu` (see docs/docker.md).
+polars==1.18.0
+
+# ---- Object storage ----
+minio==7.2.13
+
+# ---- Observability (OpenTelemetry -> OTLP -> SigNoz) ----
+opentelemetry-sdk==1.29.0
+opentelemetry-api==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-logging==0.50b0
+opentelemetry-exporter-otlp-proto-grpc==1.29.0

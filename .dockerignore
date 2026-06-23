@@ -1,0 +1,24 @@
+# Keep the build context small and the image clean.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Never bake test data / secrets into the image
+tests/data/*.csv
+data/
+.env
+*.tmp
+
+# Docs are not needed at runtime
+docs/
+*.md
+!README.md
+
+# Local scratch
+scratch/

@@ -1,0 +1,63 @@
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]          # les tags de version pilotent les images de release
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: "pip" }
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check app tests           # style/lint — échoue vite, peu coûteux
+      - run: pytest -q                       # tests des règles métier (tests données réelles auto-skippés)
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3        # BuildKit : cache + multi-arch
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true                                # build local d'abord (pour le scan)
+          tags: arteci-date-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with: { image-ref: arteci-date-api:ci, severity: "HIGH,CRITICAL", exit-code: "1" }
+
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Dériver les tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/arteci-date-api
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-                 # traçabilité : image == commit
+            type=semver,pattern={{version}}      # v1.0.0 -> :1.0.0
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

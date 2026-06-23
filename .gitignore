@@ -1,0 +1,38 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Environment ----
+.env
+*.local
+
+# ---- Test data: large CSVs must NOT be committed ----
+tests/data/*.csv
+data/*.csv
+*.tmp
+*.csv
+# Exception : on garde le petit CSV de démo des règles métier.
+!test_rules.csv
+# ---- OS / IDE ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+
+# ---- SigNoz cloné localement (dépôt tiers, NE PAS commiter) ----
+signoz/
+
+# ---- Scratch / temp processing files ----
+/tmp/
+scratch/
