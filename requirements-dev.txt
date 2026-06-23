@@ -8,3 +8,4 @@ pytest-asyncio==0.25.0
 # ---- Benchmark comparison baseline ----
 pandas==2.2.3           # used only by scripts/benchmark.py as the "row-by-row / pandas" baseline
 psutil==6.1.1           # peak-memory measurement in the benchmark
+ruff==0.15.17
