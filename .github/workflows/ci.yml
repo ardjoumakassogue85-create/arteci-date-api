@@ -54,7 +54,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/arteci-date-api
+          images: ardjouma/arteci-date-api
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-                 # traçabilité : image == commit
