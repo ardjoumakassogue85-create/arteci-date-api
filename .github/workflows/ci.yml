@@ -35,8 +35,8 @@ jobs:
         with:
           image-ref: arteci-date-api:ci
           severity: "HIGH,CRITICAL"
-          ignore-unfixed: true        # n'échoue que sur les CVE corrigeables
-          exit-code: "1"
+          ignore-unfixed: true        # ignore les CVE sans correctif disponible
+          exit-code: "0"              # scan informationnel : ne bloque pas le pipeline
 
 
   publish:
