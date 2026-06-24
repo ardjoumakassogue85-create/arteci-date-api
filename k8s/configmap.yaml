@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: arteci-config }
+data:
+  MINIO_ENDPOINT: "minio.minio.svc.cluster.local:9000"
+  MINIO_SECURE: "false"
+  PROCESSING_BATCH_ROWS: "500000"
+  # Route les fichiers temporaires (tempfile) vers l'emptyDir monté sur /tmp/arteci
+  # => le sizeLimit du volume s'applique vraiment aux gros CSV en cours de traitement.
+  TMPDIR: "/tmp/arteci"
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://signoz-otel-collector.signoz.svc.cluster.local:4317"
+  OTEL_SERVICE_NAME: "arteci-date-api"

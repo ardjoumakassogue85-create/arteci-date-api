@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: arteci-date-api, labels: { app: arteci-date-api } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: arteci-date-api } }
+  template:
+    metadata: { labels: { app: arteci-date-api } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000 }
+      containers:
+        - name: api
+          image: ardjouma/arteci-date-api:latest   # épinglez une release en prod (ex. :1.0.0 ou :sha-xxxx)
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: arteci-config }
+            - secretRef: { name: arteci-minio }
+          resources:
+            requests: { cpu: "1",   memory: "1Gi" }   # base
+            limits:   { cpu: "4",   memory: "4Gi" }   # marge pour le fichier de 931 Mo
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts: [{ name: scratch, mountPath: /tmp/arteci }]
+      volumes:
+        - name: scratch
+          emptyDir: { sizeLimit: 4Gi }   # scratch CSV temp ; dimensionné pour le plus gros fichier

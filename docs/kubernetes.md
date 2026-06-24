@@ -3,6 +3,37 @@
 >  Quels manifests créer, pourquoi, et comment ils répondent aux contraintes ARTECI
 > (4 CPU / 8 Go, scaling horizontal, MinIO + SigNoz).
 
+## Prérequis
+
+- Un **cluster Kubernetes** et `kubectl` configuré dessus (`kubectl get nodes` répond).
+- L'**image publiée** sur un registre que le cluster peut tirer (la nôtre :
+  `ardjouma/arteci-date-api`, déjà poussée par le CI sur DockerHub).
+- **MinIO** et **SigNoz** déjà déployés (voir plus bas), ou des instances accessibles
+  depuis le cluster. L'API a juste besoin de leurs endpoints + credentials.
+
+### Cluster local pour tester (optionnel)
+Un cluster local fait l'affaire pour la démo :
+```bash
+# minikube
+minikube start --cpus=4 --memory=8192
+# metrics-server : nécessaire pour que le HPA voie le CPU (sinon il reste <unknown>)
+minikube addons enable metrics-server
+# ou kind
+kind create cluster
+```
+
+## Les fichiers à créer
+
+On range tout dans un dossier `k8s/`, **un fichier par manifest** :
+```
+k8s/configmap.yaml      # config non secrète
+k8s/secret.yaml         # credentials MinIO
+k8s/deployment.yaml     # les réplicas de l'API
+k8s/service.yaml        # adresse stable in-cluster
+k8s/hpa.yaml            # autoscaling
+k8s/ingress.yaml        # (optionnel) entrée HTTPS externe
+```
+
 ## Les manifests à créer
 
 | Manifest | Rôle |
@@ -33,7 +64,7 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000 }
       containers:
         - name: api
-          image: <user-dockerhub>/arteci-date-api:1.0.0
+          image: ardjouma/arteci-date-api:latest   # épinglez une release en prod (ex. :1.0.0 ou :sha-xxxx)
           ports: [{ containerPort: 8000 }]
           envFrom:
             - configMapRef: { name: arteci-config }
@@ -74,6 +105,9 @@ data:
   MINIO_ENDPOINT: "minio.minio.svc.cluster.local:9000"
   MINIO_SECURE: "false"
   PROCESSING_BATCH_ROWS: "500000"
+  # Route les fichiers temporaires vers l'emptyDir monté sur /tmp/arteci
+  # (sinon tempfile écrit dans /tmp et le sizeLimit du volume ne s'applique pas).
+  TMPDIR: "/tmp/arteci"
   OTEL_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://signoz-otel-collector.signoz.svc.cluster.local:4317"
   OTEL_SERVICE_NAME: "arteci-date-api"
@@ -113,12 +147,53 @@ réplica peut servir n'importe quelle requête, donc ajouter des pods augmente l
 façon linéaire. C'est exactement l'exigence de scalabilité : absorber plus de volume en
 ajoutant des réplicas, pas en grossissant une seule machine.
 
-## Appliquer
+## Déployer les dépendances (MinIO + SigNoz)
+
+Ce sont des services stateful : on les installe via Helm, dans leurs propres namespaces.
 ```bash
+# MinIO
+helm repo add minio https://charts.min.io/ && helm repo update
+helm install minio minio/minio -n minio --create-namespace
+
+# SigNoz
+helm repo add signoz https://charts.signoz.io && helm repo update
+helm install signoz signoz/signoz -n signoz --create-namespace
+```
+> Vérifiez ensuite les **noms réels** des services (`kubectl get svc -n minio`,
+> `kubectl get svc -n signoz`) et ajustez `MINIO_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT`
+> dans le ConfigMap en conséquence.
+
+## Appliquer les manifests de l'API
+```bash
+# 1. Namespace dédié
 kubectl create namespace arteci
-kubectl -n arteci apply -f k8s/      # configmap, secret, deployment, service, hpa, (ingress)
+
+# 2. Renseignez les vrais credentials MinIO dans k8s/secret.yaml (remplacez CHANGE_ME)
+#    OU créez le Secret directement, sans le committer :
+# kubectl -n arteci create secret generic arteci-minio \
+#   --from-literal=MINIO_ACCESS_KEY=... --from-literal=MINIO_SECRET_KEY=...
+
+# 3. Appliquez tout le dossier (configmap, secret, deployment, service, hpa, ingress)
+kubectl -n arteci apply -f k8s/
+
+# 4. Attendez que le rollout soit prêt
 kubectl -n arteci rollout status deploy/arteci-date-api
 ```
+
+## Vérifier le déploiement
+```bash
+# Les pods doivent être Running et Ready (2/2)
+kubectl -n arteci get pods
+# Le HPA doit voir les métriques (pas <unknown> en permanence)
+kubectl -n arteci get hpa
+# Tester l'API sans Ingress, via un port-forward local
+kubectl -n arteci port-forward svc/arteci-date-api 8000:80
+# puis, dans un autre terminal :
+curl http://localhost:8000/health        # -> {"status":"ok"}
+```
+> Si un pod reste en `CrashLoopBackOff` ou `Pending` : `kubectl -n arteci describe pod <nom>`
+> et `kubectl -n arteci logs <nom>` donnent la cause (souvent un endpoint MinIO/SigNoz
+> injoignable ou un Secret manquant).
 
 ## Durcissements de production à garder en tête
 - **Jobs longs vs timeouts HTTP :** le fichier de 931 Mo (~65 s) passe encore en requête
