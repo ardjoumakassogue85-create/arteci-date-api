@@ -46,7 +46,7 @@ Voici ce qu'on a retenu et pourquoi.
 | Préoccupation | Choix | Pourquoi |
 |---|---|---|
 | Langage | **Python 3.12** | Écosystème data riche ; avec FastAPI + Polars on a de la vitesse native là où ça compte tout en gardant le code de liaison lisible. |
-| Moteur de données | **Polars** (Rust, multi-threadé) | `str.to_datetime` est vectorisé et exploite les 4 CPU, et le lecteur par batch garde la mémoire sous contrôle sur les gros fichiers. On a mesuré 3,4 à 4,3× plus rapide et ~2× moins de mémoire que pandas (voir §6 et `docs/benchmark.md`). |
+| Moteur de données | **Polars** (Rust, multi-threadé) | `str.strptime` est vectorisé et exploite les 4 CPU, et le lecteur par batch garde la mémoire sous contrôle sur les gros fichiers. On a mesuré 3,4 à 4,3× plus rapide et ~2× moins de mémoire que pandas (voir §6 et `docs/benchmark.md`). |
 | Framework API | **FastAPI** | Async, validation Pydantic, OpenAPI/Swagger générés tout seuls, et l'instrumentation OpenTelemetry s'y branche proprement. |
 | Stockage objet | **SDK MinIO** | `fget_object`/`fput_object` streament vers/depuis le disque (RAM bornée), et les requêtes HTTP range permettent de ne lire que l'en-tête pour `GET /columns`. |
 | Observabilité | **OpenTelemetry → OTLP → SigNoz** | Des traces sur tout le cycle de la requête, plus des logs JSON corrélés par `trace_id`/`span_id`. |
@@ -231,16 +231,59 @@ pour anon_3). Méthodologie et détails dans [`docs/benchmark.md`](docs/benchmar
 
 ---
 
-## 7. Déploiement & DevOps (guides à réaliser)
+## 7. Déploiement & DevOps — notre démarche
 
-Ces parties sont documentées, pas encore implémentées — les guides expliquent comment
-les mettre en place :
+Cette partie est **implémentée**, pas seulement décrite. Voici comment on l'a organisée
+et, surtout, **pourquoi** — pour que quiconque reprend le projet comprenne la logique.
 
-- [`docs/docker.md`](docs/docker.md) — image multi-stage optimisée, non-root, DockerHub.
-- [`docs/docker-compose.md`](docs/docker-compose.md) — stack locale : API + MinIO (`raw`/`processeddata`) + SigNoz.
-- [`docs/kubernetes.md`](docs/kubernetes.md) — Deployment/Service/Config/Secret/HPA/Ingress, stratégie de scaling.
-- [`docs/cicd-github-actions.md`](docs/cicd-github-actions.md) — pipeline CI/CD, chaque étape justifiée.
-- [`docs/benchmark.md`](docs/benchmark.md) — méthodologie de benchmark, résultats, justification langage/outil.
+### Le principe qui tient tout : la config par variables d'environnement
+On a fait en sorte que **rien** ne soit codé en dur : MinIO, SigNoz, le tuning, tout
+passe par des variables d'environnement (cf. [`.env.example`](.env.example)). Du coup
+**la même image** tourne en local, en CI et en prod — on ne change que la config au
+lancement. C'est ce qui rend l'image immuable et l'API stateless, donc scalable
+horizontalement sans état partagé. C'est le fil rouge de toute la partie DevOps.
+
+### L'image : multi-stage et non-root (`Dockerfile`)
+On a séparé le build en deux étapes : une qui installe les dépendances, une autre qui ne
+garde que le code + les libs. Résultat : une image runtime **plus petite et avec moins de
+CVE** (pas de toolchain de compilation embarquée). On la fait tourner en **utilisateur
+non-root** par défense en profondeur, et on ajoute un `HEALTHCHECK` sur `/health` pour que
+les orchestrateurs sachent si le conteneur est sain. Détails et justifications dans
+[`docs/docker.md`](docs/docker.md).
+
+### Le local d'un seul coup (`docker-compose.yml`)
+Pour qu'on (et le relecteur) puisse tout lancer sans installer MinIO ni SigNoz à la main,
+le compose monte **l'API + MinIO (avec les buckets `raw`/`processeddata`) + le rattachement
+à SigNoz** en une commande. C'est l'environnement de dev reproductible. Voir
+[`docs/docker-compose.md`](docs/docker-compose.md).
+
+### Pourquoi un dossier `k8s/` séparé
+On a volontairement mis les manifests Kubernetes **dans leur propre dossier, un fichier par
+ressource** (`configmap`, `secret`, `deployment`, `service`, `hpa`). Deux raisons :
+1. **Séparation nette code / infra** : le code applicatif vit dans `app/`, le déploiement
+   dans `k8s/`. On peut faire évoluer l'un sans toucher l'autre, et `kubectl apply -f k8s/`
+   applique tout le dossier d'un coup.
+2. **Ce sont des templates** : on livre des valeurs par défaut + des `CHANGE_ME` ; c'est le
+   déployeur qui ajuste les endpoints et injecte ses secrets. Le manifest est un **modèle
+   configurable**, pas une config figée pour notre machine — même philosophie que l'image
+   (config par env) et que `.env.example`. Détails dans [`docs/kubernetes.md`](docs/kubernetes.md).
+
+### La chaîne CI/CD (`.github/workflows/ci.yml`)
+On automatise **test → build → scan → publication** à chaque push, pour ne jamais publier
+une image cassée et garder un artefact traçable :
+- **test** (ruff + pytest) sert de garde-fou : si les tests échouent, rien n'est publié.
+- **build + scan Trivy** : on construit l'image et on la scanne (sécurité) avant de la pousser.
+- **publish** : push sur DockerHub avec des tags pensés — `latest` (dernier `main`),
+  `sha-<commit>` (chaque image traçable à un commit), et semver sur les tags `v*`.
+
+L'image publiée est exactement celle qu'on teste en local → notre validation manuelle
+donne confiance dans ce que la CI pousse. Voir [`docs/cicd-github-actions.md`](docs/cicd-github-actions.md)
+et [`Image_Docker.md`](Image_Docker.md).
+
+### Le choix de l'outil, mesuré
+Enfin, on ne s'est pas contenté d'affirmer que Polars est rapide : on l'a **benchmarké**
+contre pandas (temps + mémoire) pour justifier le choix par des chiffres. Méthodologie et
+résultats dans [`docs/benchmark.md`](docs/benchmark.md).
 
 ---
 
@@ -260,7 +303,17 @@ app/
   models/schemas.py       # modèles Pydantic requête/réponse
 tests/                    # 56 tests (unitaires + API + pipeline + échantillon réel)
 scripts/benchmark.py      # Polars vs pandas, temps + mémoire
+k8s/                      # manifests K8s : configmap, secret, deployment, service, hpa
 docs/                     # guides Docker / Compose / K8s / CI-CD / benchmark
+.github/workflows/ci.yml  # CI/CD : test -> build -> scan Trivy -> push DockerHub
+Dockerfile                # image multi-stage, non-root, gunicorn/uvicorn
+docker-compose.yml        # stack locale : API + MinIO + rattachement SigNoz
+.dockerignore             # garde le contexte de build propre
+requirements.txt          # deps de prod (FastAPI, Polars, MinIO, OpenTelemetry)
+requirements-dev.txt      # + tests, ruff, baselines benchmark
+.env.example              # modèle de configuration (variables d'env)
+Image_Docker.md           # référence de l'image DockerHub (pull, run, tags)
+test_rules.csv            # petit CSV de démo des règles métier
 ```
 
 ---
